@@ -11,6 +11,8 @@ import re
 import sgtk
 from sgtk.platform import SoftwareLauncher, SoftwareVersion, LaunchInformation
 
+# standard toolkit logger
+logger = sgtk.platform.get_logger(__name__)
 
 class EngineLauncher(SoftwareLauncher):
     """
@@ -101,11 +103,56 @@ class EngineLauncher(SoftwareLauncher):
         # blindly copy what was set so modules (e.g. SG TK core) are found
         # when bootstrapping.
         required_env["UE_PYTHONPATH"] = os.environ.get("PYTHONPATH") or ""
-        self.logger.debug("Executable path: %s", exec_path)
         self.logger.debug("Launch environment: %s", pprint.pformat(required_env))
-        self.logger.debug("Launch arguments: %s", args)
 
+        exec_path, args = self._get_exec_path(exec_path)
+        self.logger.debug("Executable path: %s", exec_path)
+        self.logger.debug("Launch arguments: %s", args)
         return LaunchInformation(exec_path, args, required_env)
+
+    def _get_exec_path(self, exec_path):
+        try:
+            unreal_folder = None
+            # Get a handle to the currently running engine.
+            current_engine = sgtk.platform.current_engine()
+            current_context = current_engine.context
+            self.projectName = current_context.project.get("name", None)
+
+            if sys.platform.startswith("linux"):
+                unreal_folder = os.path.join(os.path.expanduser("~"), ".unreal")
+            elif sys.platform == "darwin":
+                unreal_folder = os.path.join(os.path.expanduser("~"),  ".unreal")
+            elif sys.platform == "win32":
+                home_dir = os.path.expanduser("~")
+                unreal_folder = "{}/.unreal".format(home_dir)
+
+            if unreal_folder and self.projectName:
+                file_name = "{}.txt".format(self.projectName)
+                file_path = "{}/{}".format(unreal_folder, file_name)
+                file_path.replace("\\", "/")
+                logger.debug(">>>> filepath is {}".format(file_path))
+                if os.path.exists(file_path):
+                    logger.debug(">>>> Getting Unreal project path from file {}".format(file_path))
+                    with open(file_path, 'r') as in_file:
+                        line = in_file.readline()
+                        line = line.rstrip()
+                        line = line.replace("\\", "/")
+                        project_path = line
+                        logger.debug(">>>> Project path: {}".format(project_path))
+                        if project_path and "Projects" in project_path:
+                            unreal_root = project_path.split("Projects")[0]
+                            exec_path = "{}Engine/Binaries/Win64/UnrealEditor.exe".format(unreal_root)
+                            exec_path.replace("\\", "/")
+                            args = '"{}" -skipcompile'.format(project_path)
+                            logger.debug(">>>>exec_path: {}".format(exec_path))
+                            logger.debug(">>>>args: {}".format(args))
+                        in_file.close()
+        except Exception as e:
+            logger.debug(">>>> Error getting Unreal project path: {}".format(e))
+            pass
+
+        return exec_path, args
+
 
     def _join_paths_with_existing_env_paths(self, env_key, startup_path):
         """
